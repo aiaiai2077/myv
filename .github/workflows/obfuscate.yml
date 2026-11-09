@@ -58,6 +58,7 @@ jobs:
       - name: Prepare obfuscate branch and push
         run: |
           cp _worker.js "$RUNNER_TEMP/_worker.js"
+          cp wrangler.toml "$RUNNER_TEMP/wrangler.toml"
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -69,8 +70,18 @@ jobs:
           fi
 
           cp "$RUNNER_TEMP/_worker.js" "$RUNNER_TEMP/obfuscate-worktree/_worker.js"
+          cp "$RUNNER_TEMP/wrangler.toml" "$RUNNER_TEMP/obfuscate-worktree/wrangler.toml"
 
-          git -C "$RUNNER_TEMP/obfuscate-worktree" add -- _worker.js
+          git -C "$RUNNER_TEMP/obfuscate-worktree" ls-files -z |
+            while IFS= read -r -d '' path; do
+              if [[ "$path" != "_worker.js" && "$path" != "wrangler.toml" ]]; then
+                git -C "$RUNNER_TEMP/obfuscate-worktree" rm -f -- "$path"
+              fi
+            done
+
+          git -C "$RUNNER_TEMP/obfuscate-worktree" add -- _worker.js wrangler.toml
+          test "$(git -C "$RUNNER_TEMP/obfuscate-worktree" ls-files | wc -l)" -eq 2
+          test "$(git -C "$RUNNER_TEMP/obfuscate-worktree" ls-files | sort)" = "$(printf '_worker.js\nwrangler.toml')"
           if git -C "$RUNNER_TEMP/obfuscate-worktree" diff --cached --quiet; then
             echo "Obfuscated _worker.js is already up to date."
           else
