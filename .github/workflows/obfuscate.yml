@@ -64,29 +64,60 @@ jobs:
 
           if git ls-remote --exit-code --heads origin obfuscate >/dev/null; then
             git fetch origin obfuscate
-            git worktree add --detach "$RUNNER_TEMP/obfuscate-worktree" FETCH_HEAD
+            git worktree add --detach "$GITHUB_WORKSPACE/obfuscate-worktree" FETCH_HEAD
           else
-            git worktree add --detach "$RUNNER_TEMP/obfuscate-worktree" HEAD
+            git worktree add --detach "$GITHUB_WORKSPACE/obfuscate-worktree" HEAD
           fi
 
-          cp "$RUNNER_TEMP/_worker.js" "$RUNNER_TEMP/obfuscate-worktree/_worker.js"
-          cp "$RUNNER_TEMP/wrangler.toml" "$RUNNER_TEMP/obfuscate-worktree/wrangler.toml"
+          cp "$RUNNER_TEMP/_worker.js" "$GITHUB_WORKSPACE/obfuscate-worktree/_worker.js"
+          cp "$RUNNER_TEMP/wrangler.toml" "$GITHUB_WORKSPACE/obfuscate-worktree/wrangler.toml"
 
-          git -C "$RUNNER_TEMP/obfuscate-worktree" ls-files -z |
+          git -C "$GITHUB_WORKSPACE/obfuscate-worktree" ls-files -z |
             while IFS= read -r -d '' path; do
               if [[ "$path" != "_worker.js" && "$path" != "wrangler.toml" ]]; then
-                git -C "$RUNNER_TEMP/obfuscate-worktree" rm -f -- "$path"
+                git -C "$GITHUB_WORKSPACE/obfuscate-worktree" rm -f -- "$path"
               fi
             done
 
-          git -C "$RUNNER_TEMP/obfuscate-worktree" add -- _worker.js wrangler.toml
-          test "$(git -C "$RUNNER_TEMP/obfuscate-worktree" ls-files | wc -l)" -eq 2
-          test "$(git -C "$RUNNER_TEMP/obfuscate-worktree" ls-files | sort)" = "$(printf '_worker.js\nwrangler.toml')"
-          if git -C "$RUNNER_TEMP/obfuscate-worktree" diff --cached --quiet; then
+          git -C "$GITHUB_WORKSPACE/obfuscate-worktree" add -- _worker.js wrangler.toml
+          test "$(git -C "$GITHUB_WORKSPACE/obfuscate-worktree" ls-files | wc -l)" -eq 2
+          test "$(git -C "$GITHUB_WORKSPACE/obfuscate-worktree" ls-files | sort)" = "$(printf '_worker.js\nwrangler.toml')"
+          if git -C "$GITHUB_WORKSPACE/obfuscate-worktree" diff --cached --quiet; then
             echo "Obfuscated _worker.js is already up to date."
           else
-            git -C "$RUNNER_TEMP/obfuscate-worktree" commit -m "chore: update obfuscated worker (safe preset, avoid 1101)"
-            git -C "$RUNNER_TEMP/obfuscate-worktree" push origin HEAD:refs/heads/obfuscate
+            git -C "$GITHUB_WORKSPACE/obfuscate-worktree" commit -m "chore: update obfuscated worker (safe preset, avoid 1101)"
+            git -C "$GITHUB_WORKSPACE/obfuscate-worktree" push origin HEAD:refs/heads/obfuscate
+          fi
+
+      - name: Deploy to all Cloudflare accounts
+        env:
+          CLOUDFLARE_DEPLOY_TARGETS: ${{ secrets.CLOUDFLARE_DEPLOY_TARGETS }}
+        run: |
+          if [[ -z "$CLOUDFLARE_DEPLOY_TARGETS" ]] ||
+            ! jq -e 'type == "array" and length >= 4 and all(.[]; (.accountId | type == "string" and test("^[a-fA-F0-9]{32}$")) and (.apiToken | type == "string" and length > 0))' <<<"$CLOUDFLARE_DEPLOY_TARGETS" >/dev/null; then
+            echo "::error::Set the CLOUDFLARE_DEPLOY_TARGETS repository secret to a JSON array with at least four {\"accountId\":\"32-hex-id\",\"apiToken\":\"token\"} entries."
+            exit 1
+          fi
+
+          config="$GITHUB_WORKSPACE/obfuscate-worktree/wrangler.toml"
+          failed_accounts=()
+          while IFS= read -r target; do
+            account_id=$(jq -r '.accountId' <<<"$target")
+            api_token=$(jq -r '.apiToken' <<<"$target")
+            echo "::add-mask::$api_token"
+            echo "Deploying Worker to Cloudflare account $account_id"
+            if CLOUDFLARE_ACCOUNT_ID="$account_id" \
+              CLOUDFLARE_API_TOKEN="$api_token" \
+              npx --yes wrangler@4 deploy --config "$config"; then
+              echo "Deployment succeeded for Cloudflare account $account_id"
+            else
+              echo "::error::Deployment failed for Cloudflare account $account_id"
+              failed_accounts+=("$account_id")
+            fi
+          done < <(jq -c '.[]' <<<"$CLOUDFLARE_DEPLOY_TARGETS")
+          if (( ${#failed_accounts[@]} > 0 )); then
+            echo "::error::Cloudflare deployment failed for account(s): ${failed_accounts[*]}"
+            exit 1
           fi
 
       - name: Upload artifact
