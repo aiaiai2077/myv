@@ -94,8 +94,8 @@ jobs:
           CLOUDFLARE_DEPLOY_TARGETS: ${{ secrets.CLOUDFLARE_DEPLOY_TARGETS }}
         run: |
           if [[ -z "$CLOUDFLARE_DEPLOY_TARGETS" ]] ||
-            ! jq -e 'type == "array" and length >= 4 and all(.[]; (.accountId | type == "string" and test("^[a-fA-F0-9]{32}$")) and (.apiToken | type == "string" and length > 0))' <<<"$CLOUDFLARE_DEPLOY_TARGETS" >/dev/null; then
-            echo "::error::Set the CLOUDFLARE_DEPLOY_TARGETS repository secret to a JSON array with at least four {\"accountId\":\"32-hex-id\",\"apiToken\":\"token\"} entries."
+            ! jq -e 'type == "array" and length >= 1 and all(.[]; (.accountId | type == "string" and test("^[a-fA-F0-9]{32}$")) and (.apiToken | type == "string" and length > 0))' <<<"$CLOUDFLARE_DEPLOY_TARGETS" >/dev/null; then
+            echo "::error::Set the CLOUDFLARE_DEPLOY_TARGETS repository secret to a JSON array with at least one {\"accountId\":\"32-hex-id\",\"apiToken\":\"token\"} entry."
             exit 1
           fi
 
