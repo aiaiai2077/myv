@@ -1,0 +1,11 @@
+{
+  "name": "cf-worker-obfuscate-safe",
+  "version": "1.0.0",
+  "private": true,
+  "devDependencies": {
+    "javascript-obfuscator": "4.1.1"
+  },
+  "scripts": {
+    "obfuscate": "javascript-obfuscator _worker.source.js --output _worker.js --seed 123456 --compact true --control-flow-flattening true --control-flow-flattening-threshold 0.4 --string-array true --string-array-encoding base64 --split-strings true --split-strings-chunk-length 16 --numbers-to-expressions true --dead-code-injection true --dead-code-injection-threshold 0.2 --disable-console-output true"
+  }
+}
