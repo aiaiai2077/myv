@@ -75,7 +75,7 @@ jobs:
             echo "Obfuscated _worker.js is already up to date."
           else
             git -C "$RUNNER_TEMP/obfuscate-worktree" commit -m "chore: update obfuscated worker (safe preset, avoid 1101)"
-            git -C "$RUNNER_TEMP/obfuscate-worktree" push origin HEAD:obfuscate
+            git -C "$RUNNER_TEMP/obfuscate-worktree" push origin HEAD:refs/heads/obfuscate
           fi
 
       - name: Upload artifact
