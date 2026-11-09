@@ -1,0 +1,87 @@
+name: Obfuscate Worker Safe (Avoid CF 1101)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [closed]
+  workflow_run:
+    workflows: ["Upstream Sync"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  obfuscate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') && (github.event_name != 'pull_request' || github.event.pull_request.merged == true)
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install --no-package-lock
+
+      - name: Show source sha256
+        run: sha256sum _worker.js
+
+      - name: Preserve source for obfuscation
+        run: cp _worker.js _worker.source.js
+
+      - name: Run JS Obfuscate (CF Safe preset)
+        run: npm run obfuscate
+
+      - name: Check generated Worker syntax
+        run: node --check _worker.js
+
+      - name: Check file size (CF Worker limit 500KB)
+        run: |
+          SIZE=$(stat -c "%s" _worker.js)
+          echo "Obfuscated size: ${SIZE} bytes"
+          if [ $SIZE -gt 500000 ]; then
+            echo "::warning::File over 500KB CF Worker limit!"
+          fi
+
+      - name: Prepare obfuscate branch and push
+        run: |
+          cp _worker.js "$RUNNER_TEMP/_worker.js"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin obfuscate >/dev/null; then
+            git fetch origin obfuscate
+            git worktree add --detach "$RUNNER_TEMP/obfuscate-worktree" FETCH_HEAD
+          else
+            git worktree add --detach "$RUNNER_TEMP/obfuscate-worktree" HEAD
+          fi
+
+          cp "$RUNNER_TEMP/_worker.js" "$RUNNER_TEMP/obfuscate-worktree/_worker.js"
+
+          git -C "$RUNNER_TEMP/obfuscate-worktree" add -- _worker.js
+          if git -C "$RUNNER_TEMP/obfuscate-worktree" diff --cached --quiet; then
+            echo "Obfuscated _worker.js is already up to date."
+          else
+            git -C "$RUNNER_TEMP/obfuscate-worktree" commit -m "chore: update obfuscated worker (safe preset, avoid 1101)"
+            git -C "$RUNNER_TEMP/obfuscate-worktree" push origin HEAD:obfuscate
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: obfuscated-worker-safe
+          path: ${{ runner.temp }}/_worker.js
+          retention-days: 7
+          if-no-files-found: error
