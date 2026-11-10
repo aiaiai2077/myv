@@ -14,7 +14,7 @@ on:
 
 jobs:
   obfuscate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') && (github.event_name != 'pull_request' || github.event.pull_request.merged == true)
     permissions:
@@ -22,13 +22,13 @@ jobs:
 
     steps:
       - name: Checkout source main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
 
@@ -41,18 +41,23 @@ jobs:
       - name: Preserve source for obfuscation
         run: cp _worker.js _worker.source.js
 
+      - name: Minify Worker source
+        run: npm run minify
+
       - name: Run JS Obfuscate (CF Safe preset)
         run: npm run obfuscate
 
       - name: Check generated Worker syntax
         run: node --check _worker.js
 
-      - name: Check file size (CF Worker limit 500KB)
+      - name: Check Worker size (Cloudflare 64 MiB uncompressed limit)
         run: |
           SIZE=$(stat -c "%s" _worker.js)
-          echo "Obfuscated size: ${SIZE} bytes"
-          if [ $SIZE -gt 500000 ]; then
-            echo "::warning::File over 500KB CF Worker limit!"
+          LIMIT=$((64 * 1024 * 1024))
+          echo "Obfuscated Worker size: ${SIZE} bytes (limit: ${LIMIT} bytes)"
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "::error::Generated Worker exceeds Cloudflare's 64 MiB uncompressed size limit."
+            exit 1
           fi
 
       - name: Ensure required KV binding
@@ -142,6 +147,48 @@ jobs:
             echo "Deploying Worker to Cloudflare account $account_id"
             config="$RUNNER_TEMP/wrangler-$account_id.toml"
             cp "$source_config" "$config"
+            namespaces=$(curl --fail-with-body --silent --show-error \
+              --header "Authorization: Bearer $api_token" \
+              "https://api.cloudflare.com/client/v4/accounts/$account_id/storage/kv/namespaces?per_page=1000") || {
+                echo "::error::Could not list KV namespaces for Cloudflare account $account_id"
+                failed_accounts+=("$account_id")
+                continue
+              }
+            if ! jq -e '.success == true and (.result | type == "array")' <<<"$namespaces" >/dev/null; then
+              echo "::error::Cloudflare did not return a valid KV namespace list for account $account_id"
+              failed_accounts+=("$account_id")
+              continue
+            fi
+            namespace_id=$(jq -r '[.result[] | select(.title == "myv-kv")][0].id // empty' <<<"$namespaces")
+            if [[ -n "$namespace_id" ]]; then
+              python3 - "$config" "$namespace_id" <<'PY'
+          import re
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          config_path = Path(sys.argv[1])
+          namespace_id = sys.argv[2]
+          config_text = config_path.read_text(encoding="utf-8")
+          config = tomllib.loads(config_text)
+          bindings = [
+              item for item in config.get("kv_namespaces", [])
+              if item.get("binding") == "KV"
+          ]
+          if len(bindings) != 1 or "id" in bindings[0]:
+              raise SystemExit("Expected one KV binding without a namespace ID")
+          updated, replacements = re.subn(
+              r'(?m)^([ \t]*binding[ \t]*=[ \t]*"KV"[ \t]*)$',
+              rf'\1\nid = "{namespace_id}"',
+              config_text,
+              count=1,
+          )
+          if replacements != 1:
+              raise SystemExit("Could not add the discovered namespace ID to the KV binding")
+          config_path.write_text(updated, encoding="utf-8")
+          PY
+              echo "Using existing myv-kv namespace for Cloudflare account $account_id"
+            fi
             if CLOUDFLARE_ACCOUNT_ID="$account_id" \
               CLOUDFLARE_API_TOKEN="$api_token" \
               npx --yes wrangler@4 deploy --config "$config"; then
@@ -157,7 +204,7 @@ jobs:
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: obfuscated-worker-safe
           path: ${{ runner.temp }}/_worker.js
