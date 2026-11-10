@@ -66,23 +66,27 @@ jobs:
           config = tomllib.loads(config_text)
           bindings = [
               item for item in config.get("kv_namespaces", [])
-              if item.get("binding") == "IP_STORAGE"
+              if item.get("binding") == "KV"
           ]
           if len(bindings) > 1:
-              raise SystemExit("wrangler.toml declares IP_STORAGE more than once")
+              raise SystemExit("wrangler.toml declares KV more than once")
           if not bindings:
               config_text = config_text.rstrip() + (
-                  '\n\n[[kv_namespaces]]\nbinding = "IP_STORAGE"\n'
+                  '\n\n[[kv_namespaces]]\nbinding = "KV"\n'
               )
               config_path.write_text(config_text, encoding="utf-8")
               config = tomllib.loads(config_text)
               bindings = [
                   item for item in config.get("kv_namespaces", [])
-                  if item.get("binding") == "IP_STORAGE"
+                  if item.get("binding") == "KV"
               ]
           if len(bindings) != 1:
-              raise SystemExit("Failed to configure exactly one IP_STORAGE KV binding")
-          print("IP_STORAGE KV binding is configured; Wrangler will provision it if needed.")
+              raise SystemExit("Failed to configure exactly one KV binding")
+          if "id" in bindings[0]:
+              raise SystemExit(
+                  "KV binding has a namespace ID; remove it to allow automatic namespace creation."
+              )
+          print("KV binding is configured without an ID for automatic namespace provisioning.")
           PY
 
       - name: Prepare obfuscate branch and push
