@@ -44,20 +44,24 @@ jobs:
       - name: Minify Worker source
         run: npm run minify
 
-      - name: Run JS Obfuscate (CF Safe preset)
+      - name: Run JS Obfuscate (CF Safe preset, inline args)
         run: npm run obfuscate
 
       - name: Check generated Worker syntax
         run: node --check _worker.js
 
-      - name: Check Worker size (Cloudflare 64 MiB uncompressed limit)
+      - name: Check Worker size (CF Worker hard limit 512000 bytes, safe cap 491520)
         run: |
           SIZE=$(stat -c "%s" _worker.js)
-          LIMIT=$((64 * 1024 * 1024))
-          echo "Obfuscated Worker size: ${SIZE} bytes (limit: ${LIMIT} bytes)"
-          if [ "$SIZE" -gt "$LIMIT" ]; then
-            echo "::error::Generated Worker exceeds Cloudflare's 64 MiB uncompressed size limit."
+          SAFE_LIMIT=491520
+          HARD_LIMIT=512000
+          echo "Obfuscated Worker size: ${SIZE} bytes | safe limit: ${SAFE_LIMIT} | CF hard limit: ${HARD_LIMIT}"
+          if [ "$SIZE" -gt "$HARD_LIMIT" ]; then
+            echo "::error::Obfuscated _worker.js exceeds Cloudflare Worker 500KB hard limit!"
             exit 1
+          fi
+          if [ "$SIZE" -gt "$SAFE_LIMIT" ]; then
+            echo "::warning::Obfuscated Worker is close to size limit, may cause runtime instability"
           fi
 
       - name: Ensure required KV binding
