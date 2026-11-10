@@ -7,7 +7,7 @@
     "terser": "5.51.2"
   },
   "scripts": {
-    "minify": "terser _worker.source.js --compress --mangle --output _worker.min.js",
-    "obfuscate": "javascript-obfuscator _worker.min.js --output _worker.js --seed 123456 --compact true --control-flow-flattening false --string-array false --split-strings false --numbers-to-expressions false --dead-code-injection false --rename-globals false --identifier-names-generator mangled"
+    "minify": "terser _worker.source.js --compress --mangle --toplevel --keep-fnames --output _worker.min.js",
+    "obfuscate": "javascript-obfuscator _worker.min.js --output _worker.js --seed 123456 --compact true --control-flow-flattening false --string-array false --split-strings false --numbers-to-expressions false --dead-code-injection false --rename-globals false --identifier-names-generator mangled --target service-worker --self-defending false --debug-protection false --disable-console-output false"
   }
 }
