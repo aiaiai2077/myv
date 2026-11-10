@@ -160,8 +160,31 @@ jobs:
               continue
             fi
             namespace_id=$(jq -r '[.result[] | select(.title == "myv-kv")][0].id // empty' <<<"$namespaces")
-            if [[ -n "$namespace_id" ]]; then
-              python3 - "$config" "$namespace_id" <<'PY'
+            if [[ -z "$namespace_id" ]]; then
+              echo "Creating missing myv-kv namespace for Cloudflare account $account_id"
+              namespace_response=$(curl --fail-with-body --silent --show-error \
+                --request POST \
+                --header "Authorization: Bearer $api_token" \
+                --header "Content-Type: application/json" \
+                --data '{"title":"myv-kv"}' \
+                "https://api.cloudflare.com/client/v4/accounts/$account_id/storage/kv/namespaces") || {
+                  echo "::error::Could not create myv-kv KV namespace for Cloudflare account $account_id"
+                  failed_accounts+=("$account_id")
+                  continue
+                }
+              if ! jq -e '.success == true and (.result.id | type == "string" and test("^[a-fA-F0-9]{32}$"))' <<<"$namespace_response" >/dev/null; then
+                echo "::error::Cloudflare did not return a valid KV namespace ID for account $account_id"
+                failed_accounts+=("$account_id")
+                continue
+              fi
+              namespace_id=$(jq -r '.result.id' <<<"$namespace_response")
+            fi
+            if ! [[ "$namespace_id" =~ ^[a-fA-F0-9]{32}$ ]]; then
+              echo "::error::Invalid KV namespace ID for Cloudflare account $account_id"
+              failed_accounts+=("$account_id")
+              continue
+            fi
+            python3 - "$config" "$namespace_id" <<'PY'
           import re
           import sys
           import tomllib
@@ -177,18 +200,29 @@ jobs:
           ]
           if len(bindings) != 1 or "id" in bindings[0]:
               raise SystemExit("Expected one KV binding without a namespace ID")
-          updated, replacements = re.subn(
-              r'(?m)^([ \t]*binding[ \t]*=[ \t]*"KV"[ \t]*)$',
-              rf'\1\nid = "{namespace_id}"',
-              config_text,
-              count=1,
-          )
-          if replacements != 1:
-              raise SystemExit("Could not add the discovered namespace ID to the KV binding")
-          config_path.write_text(updated, encoding="utf-8")
+
+          lines = config_text.splitlines(keepends=True)
+          current_table = None
+          binding_line = None
+          for index, line in enumerate(lines):
+              table_match = re.match(r"^[ \t]*\[\[([^\]]+)\]\][ \t]*(?:#.*)?$", line.rstrip("\r\n"))
+              if table_match:
+                  current_table = table_match.group(1)
+              elif re.match(r"^[ \t]*\[[^\[].*\][ \t]*(?:#.*)?$", line.rstrip("\r\n")):
+                  current_table = None
+              elif (
+                  current_table == "kv_namespaces"
+                  and re.match(r'^[ \t]*binding[ \t]*=[ \t]*"KV"[ \t]*(?:#.*)?$', line.rstrip("\r\n"))
+              ):
+                  binding_line = index
+
+          if binding_line is None:
+              raise SystemExit("Could not locate the top-level KV binding")
+          newline = "\r\n" if lines[binding_line].endswith("\r\n") else "\n"
+          lines.insert(binding_line + 1, f'id = "{namespace_id}"{newline}')
+          config_path.write_text("".join(lines), encoding="utf-8")
           PY
-              echo "Using existing myv-kv namespace for Cloudflare account $account_id"
-            fi
+            echo "Using KV namespace $namespace_id for Cloudflare account $account_id"
             if CLOUDFLARE_ACCOUNT_ID="$account_id" \
               CLOUDFLARE_API_TOKEN="$api_token" \
               npx --yes wrangler@4 deploy --config "$config"; then
