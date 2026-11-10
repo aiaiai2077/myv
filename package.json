@@ -8,6 +8,6 @@
   },
   "scripts": {
     "minify": "terser _worker.source.js --compress --mangle --output _worker.min.js",
-    "obfuscate": "javascript-obfuscator _worker.min.js --output _worker.js --compact true --control-flow-flattening false --string-array false --split-strings false --numbers-to-expressions false --dead-code-injection false --disable-console-output false"
+    "obfuscate": "javascript-obfuscator _worker.min.js --output _worker.js --compact true --control-flow-flattening false --string-array false --split-strings false --numbers-to-expressions false --dead-code-injection false --disable-console-output false --identifier-names-generator mangled-shuffled --rename-globals true"
   }
 }
