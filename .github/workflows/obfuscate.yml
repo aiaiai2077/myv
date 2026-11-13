@@ -23,12 +23,6 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Checkout v1 output branch
-        uses: actions/checkout@v3
-        with:
-          ref: v1
-          path: output
-
       - name: Install dependencies
         run: npm install --no-package-lock
 
@@ -37,12 +31,25 @@ jobs:
 
       - name: Commit and push obfuscated worker to v1
         run: |
+          if git ls-remote --exit-code --heads origin refs/heads/v1 > /tmp/v1-ref; then
+            git fetch origin refs/heads/v1:refs/remotes/origin/v1
+            git worktree add -b v1 output refs/remotes/origin/v1
+          else
+            status=$?
+            if [ "$status" -ne 2 ]; then
+              cat /tmp/v1-ref
+              exit "$status"
+            fi
+            git worktree add --detach output HEAD
+            git -C output switch --orphan v1
+          fi
           git -C output ls-files -z | while IFS= read -r -d '' file; do
             case "$file" in
               _worker.js|wrangler.toml) ;;
               *) git -C output rm -f -- "$file" ;;
             esac
           done
+          git -C output clean -fdx
           cp _worker.js output/_worker.js
           cp wrangler.toml output/wrangler.toml
           sed -i 's|^main = .*|main = "_worker.js"|' output/wrangler.toml
