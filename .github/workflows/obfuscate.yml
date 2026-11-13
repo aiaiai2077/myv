@@ -64,12 +64,12 @@ jobs:
           git -C output commit -m "Obfuscate _worker.js"
           git -C output push origin HEAD:v1
 
-      - name: Upload Worker script to Cloudflare accounts
+      - name: Deploy to Cloudflare accounts
         env:
           CLOUDFLARE_DEPLOY_TARGETS: ${{ secrets.CLOUDFLARE_DEPLOY_TARGETS }}
         run: |
-          node --input-type=module <<'NODE'
-          import { readFile } from "node:fs/promises";
+          node <<'NODE'
+          const { spawnSync } = require("node:child_process");
 
           const rawAccounts = process.env.CLOUDFLARE_DEPLOY_TARGETS?.replace(/^\uFEFF/, "").trim();
           if (!rawAccounts) {
@@ -107,95 +107,27 @@ jobs:
             process.exit(1);
           }
 
-          const config = await readFile("wrangler.toml", "utf8");
-          function getStringSetting(name) {
-            const match = config.match(
-              new RegExp(`^${name}\\s*=\\s*("(?:\\\\.|[^"\\\\])*")\\s*$`, "m"),
-            );
-            if (!match) {
-              throw new Error(`Missing or unsupported Wrangler setting: ${name}`);
-            }
-            return JSON.parse(match[1]);
-          }
-
-          const bindings = [];
-          const varsHeader = config.match(/^\[vars\]\s*$/m);
-          if (varsHeader && varsHeader.index !== undefined) {
-            const varsStart = varsHeader.index + varsHeader[0].length;
-            const remainingConfig = config.slice(varsStart);
-            const nextSectionOffset = remainingConfig.search(/^\[/m);
-            const varsText =
-              nextSectionOffset < 0
-                ? remainingConfig
-                : remainingConfig.slice(0, nextSectionOffset);
-            for (const line of varsText.split(/\r?\n/)) {
-              const trimmed = line.trim();
-              if (!trimmed || trimmed.startsWith("#")) continue;
-              const match = trimmed.match(
-                /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*("(?:\\.|[^"\\])*")\s*(?:#.*)?$/,
-              );
-              if (!match) {
-                throw new Error(
-                  "Unsupported [vars] entry in wrangler.toml; refusing upload to avoid changing Worker bindings.",
-                );
-              }
-              bindings.push({
-                type: "plain_text",
-                name: match[1],
-                text: JSON.parse(match[2]),
-              });
-            }
-          }
-
-          const scriptName = getStringSetting("name");
-          const script = await readFile("output/_worker.js");
-          const metadata = {
-            main_module: "_worker.js",
-            compatibility_date: getStringSetting("compatibility_date"),
-            bindings,
-          };
-
           for (let index = 0; index < accounts.length; index += 1) {
-            console.log(`Uploading Worker script to Cloudflare account ${index + 1}...`);
-            const form = new FormData();
-            form.append(
-              "metadata",
-              new Blob([JSON.stringify(metadata)], { type: "application/json" }),
-              "metadata.json",
-            );
-            form.append(
-              "_worker.js",
-              new Blob([script], { type: "application/javascript+module" }),
-              "_worker.js",
-            );
-
-            const response = await fetch(
-              `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accounts[index].accountId)}/workers/scripts/${encodeURIComponent(scriptName)}`,
+            console.log(`Deploying to Cloudflare account ${index + 1}...`);
+            const result = spawnSync(
+              "npx",
+              ["wrangler", "deploy", "--config", "output/wrangler.toml"],
               {
-                method: "PUT",
-                headers: {
-                  Authorization: `Bearer ${accounts[index].apiToken}`,
+                stdio: "inherit",
+                env: {
+                  ...process.env,
+                  CLOUDFLARE_API_TOKEN: accounts[index].apiToken,
+                  CLOUDFLARE_ACCOUNT_ID: accounts[index].accountId,
                 },
-                body: form,
               },
             );
-            let result;
-            try {
-              result = await response.json();
-            } catch {
-              console.error(
-                `Cloudflare returned HTTP ${response.status} with a non-JSON response for account ${index + 1}.`,
-              );
+
+            if (result.error) {
+              console.error(`Deployment ${index + 1} failed to start.`);
               process.exit(1);
             }
-            if (!response.ok || !result || result.success !== true) {
-              const errors = Array.isArray(result.errors)
-                ? result.errors.map((error) => error.message).join("; ")
-                : "Unknown Cloudflare API error";
-              console.error(
-                `Script upload failed for account ${index + 1} (HTTP ${response.status}): ${errors}`,
-              );
-              process.exit(1);
+            if (result.status !== 0) {
+              process.exit(result.status ?? 1);
             }
           }
           NODE
