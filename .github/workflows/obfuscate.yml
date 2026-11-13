@@ -63,3 +63,37 @@ jobs:
           fi
           git -C output commit -m "Obfuscate _worker.js"
           git -C output push origin HEAD:v1
+
+      - name: Verify Cloudflare credentials
+        env:
+          CF_API_TOKEN_1: ${{ secrets.CF_API_TOKEN_1 }}
+          CF_ACCOUNT_ID_1: ${{ secrets.CF_ACCOUNT_ID_1 }}
+          CF_API_TOKEN_2: ${{ secrets.CF_API_TOKEN_2 }}
+          CF_ACCOUNT_ID_2: ${{ secrets.CF_ACCOUNT_ID_2 }}
+          CF_API_TOKEN_3: ${{ secrets.CF_API_TOKEN_3 }}
+          CF_ACCOUNT_ID_3: ${{ secrets.CF_ACCOUNT_ID_3 }}
+        run: |
+          for name in CF_API_TOKEN_1 CF_ACCOUNT_ID_1 CF_API_TOKEN_2 CF_ACCOUNT_ID_2 CF_API_TOKEN_3 CF_ACCOUNT_ID_3; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required GitHub Actions secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Deploy to Cloudflare account 1
+        run: npx wrangler deploy --config output/wrangler.toml
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN_1 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID_1 }}
+
+      - name: Deploy to Cloudflare account 2
+        run: npx wrangler deploy --config output/wrangler.toml
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN_2 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID_2 }}
+
+      - name: Deploy to Cloudflare account 3
+        run: npx wrangler deploy --config output/wrangler.toml
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN_3 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID_3 }}
