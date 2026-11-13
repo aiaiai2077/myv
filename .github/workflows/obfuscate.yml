@@ -51,7 +51,21 @@ jobs:
           done
           git -C output clean -fdx
           cp _worker.js output/_worker.js
+          if [ -f output/wrangler.toml ]; then
+            awk '
+              /^\[\[kv_namespaces\]\][[:space:]]*$/ { in_kv = 1; print; next }
+              /^\[/ { in_kv = 0 }
+              in_kv { print }
+            ' output/wrangler.toml > /tmp/previous-kv-namespaces.toml
+          else
+            : > /tmp/previous-kv-namespaces.toml
+          fi
           cp wrangler.toml output/wrangler.toml
+          if [ -s /tmp/previous-kv-namespaces.toml ] &&
+            ! grep -q '^\[\[kv_namespaces\]\]' output/wrangler.toml; then
+            printf '\n' >> output/wrangler.toml
+            cat /tmp/previous-kv-namespaces.toml >> output/wrangler.toml
+          fi
           sed -i 's|^main = .*|main = "_worker.js"|' output/wrangler.toml
           grep -q '^main = "_worker.js"$' output/wrangler.toml
           git -C output config user.email "github-actions[bot]@users.noreply.github.com"
