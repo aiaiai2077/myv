@@ -111,7 +111,7 @@ jobs:
             console.log(`Deploying to Cloudflare account ${index + 1}...`);
             const result = spawnSync(
               "npx",
-              ["wrangler", "deploy", "--config", "output/wrangler.toml"],
+              ["wrangler", "deploy", "_worker.js"],
               {
                 stdio: "inherit",
                 env: {
