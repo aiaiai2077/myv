@@ -69,7 +69,7 @@ jobs:
           CLOUDFLARE_DEPLOY_TARGETS: ${{ secrets.CLOUDFLARE_DEPLOY_TARGETS }}
         run: |
           node --input-type=module <<'NODE'
-          const { readFile } = require("node:fs/promises");
+          import { readFile } from "node:fs/promises";
 
           const rawAccounts = process.env.CLOUDFLARE_DEPLOY_TARGETS?.replace(/^\uFEFF/, "").trim();
           if (!rawAccounts) {
