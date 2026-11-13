@@ -1,246 +1,58 @@
-name: Obfuscate Worker Safe (Avoid CF 1101)
+name: Obfuscate and Commit
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
-    types: [closed]
-  workflow_run:
-    workflows: ["Upstream Sync"]
-    types: [completed]
-    branches: [main]
+    paths:
+      - '_worker.js'
   workflow_dispatch:
 
 jobs:
   obfuscate:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    if: (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') && (github.event_name != 'pull_request' || github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Checkout source main
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v3
         with:
           ref: main
-          fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - name: Use Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: "22"
+
+      - name: Checkout v1 output branch
+        uses: actions/checkout@v3
+        with:
+          ref: v1
+          path: output
 
       - name: Install dependencies
         run: npm install --no-package-lock
 
-      - name: Show source sha256
-        run: sha256sum _worker.js
-
-      - name: Preserve source for obfuscation
-        run: cp _worker.js _worker.source.js
-
-      - name: Minify Worker source
-        run: npm run minify
-
-      - name: Run JS Obfuscate (CF Safe preset)
+      - name: Obfuscate code
         run: npm run obfuscate
 
-      - name: Check generated Worker syntax
-        run: node --check _worker.js
-
-      - name: Check Worker size (Cloudflare 64 MiB uncompressed limit)
+      - name: Commit and push obfuscated worker to v1
         run: |
-          SIZE=$(stat -c "%s" _worker.js)
-          LIMIT=$((64 * 1024 * 1024))
-          echo "Obfuscated Worker size: ${SIZE} bytes (limit: ${LIMIT} bytes)"
-          if [ "$SIZE" -gt "$LIMIT" ]; then
-            echo "::error::Generated Worker exceeds Cloudflare's 64 MiB uncompressed size limit."
-            exit 1
+          git -C output ls-files -z | while IFS= read -r -d '' file; do
+            case "$file" in
+              _worker.js|wrangler.toml) ;;
+              *) git -C output rm -f -- "$file" ;;
+            esac
+          done
+          cp _worker.js output/_worker.js
+          cp wrangler.toml output/wrangler.toml
+          sed -i 's|^main = .*|main = "_worker.js"|' output/wrangler.toml
+          grep -q '^main = "_worker.js"$' output/wrangler.toml
+          git -C output config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C output config user.name "github-actions[bot]"
+          git -C output add _worker.js wrangler.toml
+          if git -C output diff --cached --quiet; then
+            echo "No changes to push"
+            exit 0
           fi
-
-      - name: Ensure required KV binding
-        run: |
-          python3 - <<'PY'
-          import tomllib
-          from pathlib import Path
-
-          config_path = Path("wrangler.toml")
-          config_text = config_path.read_text(encoding="utf-8")
-          config = tomllib.loads(config_text)
-          bindings = [
-              item for item in config.get("kv_namespaces", [])
-              if item.get("binding") == "KV"
-          ]
-          if len(bindings) > 1:
-              raise SystemExit("wrangler.toml declares KV more than once")
-          if not bindings:
-              config_text = config_text.rstrip() + (
-                  '\n\n[[kv_namespaces]]\nbinding = "KV"\n'
-              )
-              config_path.write_text(config_text, encoding="utf-8")
-              config = tomllib.loads(config_text)
-              bindings = [
-                  item for item in config.get("kv_namespaces", [])
-                  if item.get("binding") == "KV"
-              ]
-          if len(bindings) != 1:
-              raise SystemExit("Failed to configure exactly one KV binding")
-          if "id" in bindings[0]:
-              raise SystemExit(
-                  "KV binding has a namespace ID; remove it to allow automatic namespace creation."
-              )
-          print("KV binding is configured without an ID for automatic namespace provisioning.")
-          PY
-
-      - name: Prepare obfuscate branch and push
-        run: |
-          cp _worker.js "$RUNNER_TEMP/_worker.js"
-          cp wrangler.toml "$RUNNER_TEMP/wrangler.toml"
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          if git ls-remote --exit-code --heads origin obfuscate >/dev/null; then
-            git fetch origin obfuscate
-            git worktree add --detach "$GITHUB_WORKSPACE/obfuscate-worktree" FETCH_HEAD
-          else
-            git worktree add --detach "$GITHUB_WORKSPACE/obfuscate-worktree" HEAD
-          fi
-
-          cp "$RUNNER_TEMP/_worker.js" "$GITHUB_WORKSPACE/obfuscate-worktree/_worker.js"
-          cp "$RUNNER_TEMP/wrangler.toml" "$GITHUB_WORKSPACE/obfuscate-worktree/wrangler.toml"
-
-          git -C "$GITHUB_WORKSPACE/obfuscate-worktree" ls-files -z |
-            while IFS= read -r -d '' path; do
-              if [[ "$path" != "_worker.js" && "$path" != "wrangler.toml" ]]; then
-                git -C "$GITHUB_WORKSPACE/obfuscate-worktree" rm -f -- "$path"
-              fi
-            done
-
-          git -C "$GITHUB_WORKSPACE/obfuscate-worktree" add -- _worker.js wrangler.toml
-          test "$(git -C "$GITHUB_WORKSPACE/obfuscate-worktree" ls-files | wc -l)" -eq 2
-          test "$(git -C "$GITHUB_WORKSPACE/obfuscate-worktree" ls-files | sort)" = "$(printf '_worker.js\nwrangler.toml')"
-          if git -C "$GITHUB_WORKSPACE/obfuscate-worktree" diff --cached --quiet; then
-            echo "Obfuscated _worker.js is already up to date."
-          else
-            git -C "$GITHUB_WORKSPACE/obfuscate-worktree" commit -m "chore: update obfuscated worker (safe preset, avoid 1101)"
-            git -C "$GITHUB_WORKSPACE/obfuscate-worktree" push origin HEAD:refs/heads/obfuscate
-          fi
-
-      - name: Deploy to all Cloudflare accounts
-        env:
-          CLOUDFLARE_DEPLOY_TARGETS: ${{ secrets.CLOUDFLARE_DEPLOY_TARGETS }}
-        run: |
-          if [[ -z "$CLOUDFLARE_DEPLOY_TARGETS" ]] ||
-            ! jq -e 'type == "array" and length >= 1 and all(.[]; (.accountId | type == "string" and test("^[a-fA-F0-9]{32}$")) and (.apiToken | type == "string" and length > 0))' <<<"$CLOUDFLARE_DEPLOY_TARGETS" >/dev/null; then
-            echo "::error::Set the CLOUDFLARE_DEPLOY_TARGETS repository secret to a JSON array with at least one {\"accountId\":\"32-hex-id\",\"apiToken\":\"token\"} entry."
-            exit 1
-          fi
-
-          source_config="$GITHUB_WORKSPACE/obfuscate-worktree/wrangler.toml"
-          failed_accounts=()
-          while IFS= read -r target; do
-            account_id=$(jq -r '.accountId' <<<"$target")
-            api_token=$(jq -r '.apiToken' <<<"$target")
-            echo "::add-mask::$api_token"
-            echo "Deploying Worker to Cloudflare account $account_id"
-            config="$RUNNER_TEMP/wrangler-$account_id.toml"
-            cp "$source_config" "$config"
-            namespaces=$(curl --fail-with-body --silent --show-error \
-              --header "Authorization: Bearer $api_token" \
-              "https://api.cloudflare.com/client/v4/accounts/$account_id/storage/kv/namespaces?per_page=1000") || {
-                echo "::error::Could not list KV namespaces for Cloudflare account $account_id"
-                failed_accounts+=("$account_id")
-                continue
-              }
-            if ! jq -e '.success == true and (.result | type == "array")' <<<"$namespaces" >/dev/null; then
-              echo "::error::Cloudflare did not return a valid KV namespace list for account $account_id"
-              failed_accounts+=("$account_id")
-              continue
-            fi
-            namespace_id=$(jq -r '[.result[] | select(.title == "myv-kv")][0].id // empty' <<<"$namespaces")
-            if [[ -z "$namespace_id" ]]; then
-              echo "Creating missing myv-kv namespace for Cloudflare account $account_id"
-              namespace_response=$(curl --fail-with-body --silent --show-error \
-                --request POST \
-                --header "Authorization: Bearer $api_token" \
-                --header "Content-Type: application/json" \
-                --data '{"title":"myv-kv"}' \
-                "https://api.cloudflare.com/client/v4/accounts/$account_id/storage/kv/namespaces") || {
-                  echo "::error::Could not create myv-kv KV namespace for Cloudflare account $account_id"
-                  failed_accounts+=("$account_id")
-                  continue
-                }
-              if ! jq -e '.success == true and (.result.id | type == "string" and test("^[a-fA-F0-9]{32}$"))' <<<"$namespace_response" >/dev/null; then
-                echo "::error::Cloudflare did not return a valid KV namespace ID for account $account_id"
-                failed_accounts+=("$account_id")
-                continue
-              fi
-              namespace_id=$(jq -r '.result.id' <<<"$namespace_response")
-            fi
-            if ! [[ "$namespace_id" =~ ^[a-fA-F0-9]{32}$ ]]; then
-              echo "::error::Invalid KV namespace ID for Cloudflare account $account_id"
-              failed_accounts+=("$account_id")
-              continue
-            fi
-            python3 - "$config" "$namespace_id" <<'PY'
-          import re
-          import sys
-          import tomllib
-          from pathlib import Path
-
-          config_path = Path(sys.argv[1])
-          namespace_id = sys.argv[2]
-          config_text = config_path.read_text(encoding="utf-8")
-          config = tomllib.loads(config_text)
-          bindings = [
-              item for item in config.get("kv_namespaces", [])
-              if item.get("binding") == "KV"
-          ]
-          if len(bindings) != 1 or "id" in bindings[0]:
-              raise SystemExit("Expected one KV binding without a namespace ID")
-
-          lines = config_text.splitlines(keepends=True)
-          current_table = None
-          binding_line = None
-          for index, line in enumerate(lines):
-              table_match = re.match(r"^[ \t]*\[\[([^\]]+)\]\][ \t]*(?:#.*)?$", line.rstrip("\r\n"))
-              if table_match:
-                  current_table = table_match.group(1)
-              elif re.match(r"^[ \t]*\[[^\[].*\][ \t]*(?:#.*)?$", line.rstrip("\r\n")):
-                  current_table = None
-              elif (
-                  current_table == "kv_namespaces"
-                  and re.match(r'^[ \t]*binding[ \t]*=[ \t]*"KV"[ \t]*(?:#.*)?$', line.rstrip("\r\n"))
-              ):
-                  binding_line = index
-
-          if binding_line is None:
-              raise SystemExit("Could not locate the top-level KV binding")
-          newline = "\r\n" if lines[binding_line].endswith("\r\n") else "\n"
-          lines.insert(binding_line + 1, f'id = "{namespace_id}"{newline}')
-          config_path.write_text("".join(lines), encoding="utf-8")
-          PY
-            echo "Using KV namespace $namespace_id for Cloudflare account $account_id"
-            if CLOUDFLARE_ACCOUNT_ID="$account_id" \
-              CLOUDFLARE_API_TOKEN="$api_token" \
-              npx --yes wrangler@4 deploy --config "$config"; then
-              echo "Deployment succeeded for Cloudflare account $account_id"
-            else
-              echo "::error::Deployment failed for Cloudflare account $account_id"
-              failed_accounts+=("$account_id")
-            fi
-          done < <(jq -c '.[]' <<<"$CLOUDFLARE_DEPLOY_TARGETS")
-          if (( ${#failed_accounts[@]} > 0 )); then
-            echo "::error::Cloudflare deployment failed for account(s): ${failed_accounts[*]}"
-            exit 1
-          fi
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v5
-        with:
-          name: obfuscated-worker-safe
-          path: ${{ runner.temp }}/_worker.js
-          retention-days: 7
-          if-no-files-found: error
+          git -C output commit -m "Obfuscate _worker.js"
+          git -C output push origin HEAD:v1
