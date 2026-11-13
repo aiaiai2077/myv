@@ -66,8 +66,8 @@ jobs:
 
       - name: Verify Cloudflare credentials
         env:
-          CF_API_TOKEN_1: ${{ secrets.CF_API_TOKEN_1 }}
-          CF_ACCOUNT_ID_1: ${{ secrets.CF_ACCOUNT_ID_1 }}
+          CF_API_TOKEN_1: ${{ secrets.CF_API_TOKEN_1 || secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID_1: ${{ secrets.CF_ACCOUNT_ID_1 || secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN_2: ${{ secrets.CF_API_TOKEN_2 }}
           CF_ACCOUNT_ID_2: ${{ secrets.CF_ACCOUNT_ID_2 }}
           CF_API_TOKEN_3: ${{ secrets.CF_API_TOKEN_3 }}
@@ -83,8 +83,8 @@ jobs:
       - name: Deploy to Cloudflare account 1
         run: npx wrangler deploy --config output/wrangler.toml
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN_1 }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID_1 }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN_1 || secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID_1 || secrets.CF_ACCOUNT_ID }}
 
       - name: Deploy to Cloudflare account 2
         run: npx wrangler deploy --config output/wrangler.toml
