@@ -66,15 +66,15 @@ jobs:
 
       - name: Deploy to Cloudflare accounts
         env:
-          CF_ACCOUNTS_JSON: ${{ secrets.CF_ACCOUNTS_JSON }}
+          CLOUDFLARE_DEPLOY_TARGETS: ${{ secrets.CLOUDFLARE_DEPLOY_TARGETS }}
         run: |
           node <<'NODE'
           const { spawnSync } = require("node:child_process");
 
-          const rawAccounts = process.env.CF_ACCOUNTS_JSON?.replace(/^\uFEFF/, "").trim();
+          const rawAccounts = process.env.CLOUDFLARE_DEPLOY_TARGETS?.replace(/^\uFEFF/, "").trim();
           if (!rawAccounts) {
             console.error(
-              "CF_ACCOUNTS_JSON is empty or unavailable. Check that the repository Actions secret exists with this exact name; environment secrets require assigning that environment to this job.",
+              "CLOUDFLARE_DEPLOY_TARGETS is empty or unavailable. Check that the repository Actions secret exists with this exact name; environment secrets require assigning that environment to this job.",
             );
             process.exit(1);
           }
@@ -84,7 +84,7 @@ jobs:
             accounts = JSON.parse(rawAccounts);
           } catch {
             console.error(
-              "CF_ACCOUNTS_JSON is not valid JSON. Store the raw JSON array (double quotes, no surrounding single quotes or code fences) as the secret.",
+              "CLOUDFLARE_DEPLOY_TARGETS is not valid JSON. Store the raw JSON array (double quotes, no surrounding single quotes or code fences) as the secret.",
             );
             process.exit(1);
           }
@@ -102,7 +102,7 @@ jobs:
             )
           ) {
             console.error(
-              "CF_ACCOUNTS_JSON must be an array of exactly 3 objects with non-empty accountId and apiToken strings.",
+              "CLOUDFLARE_DEPLOY_TARGETS must be an array of exactly 3 objects with non-empty accountId and apiToken strings.",
             );
             process.exit(1);
           }
