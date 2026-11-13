@@ -103,7 +103,6 @@ jobs:
             exit 1
           fi
 
-          # 重点：读取 worktree output 里面的 toml，不是仓库根目录
           source_config="$GITHUB_WORKSPACE/output/wrangler.toml"
           failed_accounts=()
 
@@ -113,11 +112,9 @@ jobs:
             echo "::add-mask::$api_token"
             echo "==== Deploy to account $account_id ===="
 
-            # 复制临时toml，用于注入KV id
             config="$RUNNER_TEMP/wrangler-$account_id.toml"
             cp "$source_config" "$config"
 
-            # 1. 查询该账号下所有KV，找title=myv-kv
             namespaces=$(curl --fail-with-body --silent --show-error \
               --header "Authorization: Bearer $api_token" \
               "https://api.cloudflare.com/client/v4/accounts/$account_id/storage/kv/namespaces?per_page=1000") || {
@@ -128,7 +125,6 @@ jobs:
 
             namespace_id=$(jq -r '[.result[] | select(.title == "myv-kv")][0].id // empty' <<<"$namespaces")
 
-            # 2. 不存在则新建 myv-kv
             if [[ -z "$namespace_id" ]]; then
               echo "myv-kv 不存在，正在创建..."
               namespace_response=$(curl --fail-with-body --silent --show-error \
@@ -145,7 +141,6 @@ jobs:
             fi
             echo "✅ KV namespace id: $namespace_id"
 
-            # 3. 脚本注入 id = "xxx" 到 binding = "KV" 那一行下方
             python3 - "$config" "$namespace_id" <<'PY'
 import re
 import sys
@@ -179,7 +174,6 @@ lines.insert(binding_line + 1, f'id = "{namespace_id}"{newline}')
 config_path.write_text("".join(lines), encoding="utf-8")
 PY
 
-            # 4. 使用注入好KV id的临时配置部署
             echo "🚀 wrangler deploy start"
             if CLOUDFLARE_ACCOUNT_ID="$account_id" \
               CLOUDFLARE_API_TOKEN="$api_token" \
