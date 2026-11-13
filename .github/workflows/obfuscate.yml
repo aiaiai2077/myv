@@ -71,11 +71,21 @@ jobs:
           node <<'NODE'
           const { spawnSync } = require("node:child_process");
 
+          const rawAccounts = process.env.CF_ACCOUNTS_JSON?.replace(/^\uFEFF/, "").trim();
+          if (!rawAccounts) {
+            console.error(
+              "CF_ACCOUNTS_JSON is empty or unavailable. Check that the repository Actions secret exists with this exact name; environment secrets require assigning that environment to this job.",
+            );
+            process.exit(1);
+          }
+
           let accounts;
           try {
-            accounts = JSON.parse(process.env.CF_ACCOUNTS_JSON || "");
+            accounts = JSON.parse(rawAccounts);
           } catch {
-            console.error("CF_ACCOUNTS_JSON must contain valid JSON.");
+            console.error(
+              "CF_ACCOUNTS_JSON is not valid JSON. Store the raw JSON array (double quotes, no surrounding single quotes or code fences) as the secret.",
+            );
             process.exit(1);
           }
 
